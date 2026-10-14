@@ -1,0 +1,17 @@
+# Core Web Framework
+Django>=5.1.0,<6.2.0
+djangorestframework>=3.15.0
+
+# Realtime Signaling & ASGI
+channels>=4.0.0
+daphne>=4.1.0
+channels-redis>=4.2.0
+redis>=5.0.0
+
+# Database (PostgreSQL)
+psycopg[binary]>=3.2.0
+
+# Security & Utilities
+django-cors-headers>=4.4.0
+python-dotenv>=1.0.0
+asgiref>=3.8.0

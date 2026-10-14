@@ -1,0 +1,113 @@
+{% extends 'base.html' %}
+
+{% block title %}Trang chủ - AI Meeting Platform{% endblock %}
+
+{% block content %}
+<div class="container hero-section">
+    <div class="hero-content">
+        <div class="badge-pill">Tuần 1: Khởi tạo kiến trúc & nền tảng</div>
+        <h1 class="hero-title">Nền Tảng Hội Thảo Trực Tuyến Thời Gian Thực</h1>
+        <p class="hero-subtitle">
+            Hệ thống video call P2P WebRTC Full Mesh kết hợp Django REST Framework và Django Channels WebSocket Signaling.
+        </p>
+
+        <div class="action-card">
+            <h2 class="card-title">Tham gia hoặc Khởi tạo Phòng Họp</h2>
+            <div class="room-action-grid">
+                <div class="action-box">
+                    <h3>Vào phòng có sẵn</h3>
+                    <div class="input-group">
+                        <input type="text" id="inputRoomCode" placeholder="Nhập mã phòng (vd: abc-def-xyz)" class="form-input">
+                        <button id="btnJoinRoom" class="btn btn-primary">Vào phòng</button>
+                    </div>
+                    <div id="joinError" class="error-text"></div>
+                </div>
+                <div class="action-divider"><span>HOẶC</span></div>
+                <div class="action-box">
+                    <h3>Tạo phòng mới</h3>
+                    <p class="text-muted">Khởi tạo phiên phòng họp riêng tư tức thời với mô hình Full Mesh.</p>
+                    <button id="btnCreateRoom" class="btn btn-accent">Tạo phòng họp mới</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="tech-stack-section">
+            <h3 class="section-title">Hạ Tầng Công Nghệ Đang Hoạt Động</h3>
+            <div class="tech-grid">
+                <div class="tech-card">
+                    <div class="tech-icon">🐍</div>
+                    <h4>Django 5.1+ / DRF</h4>
+                    <p>RESTful API, xác thực Token & cơ sở dữ liệu</p>
+                    <span class="status-indicator active">Hoạt động</span>
+                </div>
+                <div class="tech-card">
+                    <div class="tech-icon">⚡</div>
+                    <h4>Django Channels / ASGI</h4>
+                    <p>WebSocket Signaling & Realtime Chat</p>
+                    <span class="status-indicator active">Sẵn sàng</span>
+                </div>
+                <div class="tech-card">
+                    <div class="tech-icon">🌐</div>
+                    <h4>WebRTC P2P Mesh</h4>
+                    <p>Mô hình Full Mesh tối ưu nhóm &le; 6 người</p>
+                    <span class="status-indicator active">Chuẩn thiết kế</span>
+                </div>
+                <div class="tech-card">
+                    <div class="tech-icon">🐘</div>
+                    <h4>PostgreSQL / SQLite</h4>
+                    <p>Hỗ trợ linh hoạt môi trường Dev & Production</p>
+                    <span class="status-indicator active">Đã tích hợp</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="docs-section">
+            <h3 class="section-title">Tài Liệu Đặc Tả & Thiết Kế Kiến Trúc (Tuần 1)</h3>
+            <div class="docs-list">
+                <a href="/docs/requirements.md" class="doc-item">
+                    <span class="doc-icon">📄</span>
+                    <div class="doc-info">
+                        <strong>docs/requirements.md</strong>
+                        <span>Mục tiêu, phạm vi, actors, danh mục FR-01..15, NFRs và TBDs</span>
+                    </div>
+                </a>
+                <a href="/docs/business-rules.md" class="doc-item">
+                    <span class="doc-icon">📋</span>
+                    <div class="doc-info">
+                        <strong>docs/business-rules.md</strong>
+                        <span>Quy tắc phòng họp, vòng đời, multi-tab, xử lý mất kết nối, camera/mic</span>
+                    </div>
+                </a>
+                <a href="/docs/architecture.md" class="doc-item">
+                    <span class="doc-icon">🏛️</span>
+                    <div class="doc-info">
+                        <strong>docs/architecture.md</strong>
+                        <span>Kiến trúc phân tầng, sơ đồ Mermaid, WebRTC Mesh, STUN/TURN, Bottlenecks</span>
+                    </div>
+                </a>
+                <a href="/docs/database-design.md" class="doc-item">
+                    <span class="doc-icon">🗄️</span>
+                    <div class="doc-info">
+                        <strong>docs/database-design.md</strong>
+                        <span>Sơ đồ ERD Mermaid, đặc tả bảng User, Room, Participant, ChatMessage</span>
+                    </div>
+                </a>
+                <a href="/docs/api-contract.md" class="doc-item">
+                    <span class="doc-icon">🔌</span>
+                    <div class="doc-info">
+                        <strong>docs/api-contract.md</strong>
+                        <span>Chuẩn RESTful, headers, payload, mã HTTP, xác thực</span>
+                    </div>
+                </a>
+                <a href="/docs/websocket-protocol.md" class="doc-item">
+                    <span class="doc-icon">💬</span>
+                    <div class="doc-info">
+                        <strong>docs/websocket-protocol.md</strong>
+                        <span>Envelope JSON, join_room, offer, answer, ice_candidate, user_left</span>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

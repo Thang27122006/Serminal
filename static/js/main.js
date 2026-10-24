@@ -139,6 +139,46 @@ document.addEventListener('DOMContentLoaded', () => {
     const modalPeerId = document.getElementById('modalPeerId');
 
     // =========================================================================
+    // TUẦN 3: WebSocket Signaling & Room DOM Elements & State
+    // =========================================================================
+    const meetingRoomSection = document.getElementById('meetingRoomSection');
+    const roomViewTitle = document.getElementById('roomViewTitle');
+    const roomViewCode = document.getElementById('roomViewCode');
+    const roomViewRole = document.getElementById('roomViewRole');
+    const wsStatusBadge = document.getElementById('wsStatusBadge');
+    const wsStatusText = document.getElementById('wsStatusText');
+    const btnLeaveMeetingTop = document.getElementById('btnLeaveMeetingTop');
+    const btnLeaveMeetingBottom = document.getElementById('btnLeaveMeetingBottom');
+    const btnCopyRoomViewCode = document.getElementById('btnCopyRoomViewCode');
+
+    const onlinePeerCount = document.getElementById('onlinePeerCount');
+    const selfDisplayName = document.getElementById('selfDisplayName');
+    const selfPeerId = document.getElementById('selfPeerId');
+    const onlinePeersList = document.getElementById('onlinePeersList');
+
+    const selectTargetPeer = document.getElementById('selectTargetPeer');
+    const btnSendOffer = document.getElementById('btnSendOffer');
+    const btnSendAnswer = document.getElementById('btnSendAnswer');
+    const btnSendIce = document.getElementById('btnSendIce');
+    const btnClearSignalingLogs = document.getElementById('btnClearSignalingLogs');
+    const signalingLogsBox = document.getElementById('signalingLogsBox');
+
+    const chatMessagesContainer = document.getElementById('chatMessagesContainer');
+    const formSendChat = document.getElementById('formSendChat');
+    const inputChatMessage = document.getElementById('inputChatMessage');
+
+    const toolbarRoomTitle = document.getElementById('toolbarRoomTitle');
+    const toolbarRoomCode = document.getElementById('toolbarRoomCode');
+    const btnToggleMic = document.getElementById('btnToggleMic');
+    const btnToggleCam = document.getElementById('btnToggleCam');
+    const btnToggleScreen = document.getElementById('btnToggleScreen');
+
+    let currentMeetingSocket = null;
+    let currentRoomData = null;
+    let currentPasscode = '';
+    let onlinePeersMap = new Map();
+
+    // =========================================================================
     // 3. Tab Switching
     // =========================================================================
     function switchTab(isLogin) {
@@ -560,6 +600,9 @@ document.addEventListener('DOMContentLoaded', () => {
             const data = await res.json();
 
             if (res.ok && data.success) {
+                // Lưu trạng thái phòng hiện tại
+                currentRoomData = data.data;
+                currentPasscode = passcode || '';
                 // Hiển thị modal thông tin phòng đã được phê duyệt tham gia
                 openRoomModal(data.data);
             } else {
@@ -592,8 +635,8 @@ document.addEventListener('DOMContentLoaded', () => {
         };
 
         btnProceedMeeting.onclick = () => {
-            alert(`Phiên WebRTC Peer ID: ${roomData.peer_id}\n\nHạ tầng Signaling và Grid Video Media sẽ được kích hoạt kết nối trực tiếp trong Tuần 3.`);
             roomModal.classList.add('hidden');
+            enterMeetingRoom(currentRoomData, currentPasscode);
         };
 
         roomModal.classList.remove('hidden');
@@ -611,6 +654,478 @@ document.addEventListener('DOMContentLoaded', () => {
             roomModal.classList.add('hidden');
         }
     });
+
+    // =========================================================================
+    // 8. TUẦN 3: WEBSOCKET SIGNALING & PHÒNG HỌP TRỰC TIẾP
+    // =========================================================================
+
+    function enterMeetingRoom(roomData, passcode) {
+        if (!roomData) return;
+        currentRoomData = roomData;
+        currentPasscode = passcode || '';
+        onlinePeersMap.clear();
+
+        // Chuyển màn hình: ẩn guest & auth dashboard, hiện meeting room
+        if (guestSection) guestSection.classList.add('hidden');
+        if (authSection) authSection.classList.add('hidden');
+        if (meetingRoomSection) meetingRoomSection.classList.remove('hidden');
+
+        // Gán thông tin hiển thị trên UI
+        if (roomViewTitle) roomViewTitle.textContent = roomData.title || 'Phòng họp trực tuyến';
+        if (toolbarRoomTitle) toolbarRoomTitle.textContent = roomData.title || 'Phòng họp trực tuyến';
+        if (roomViewCode) roomViewCode.textContent = roomData.room_code;
+        if (toolbarRoomCode) toolbarRoomCode.textContent = roomData.room_code;
+        if (roomViewRole) {
+            roomViewRole.textContent = roomData.role === 'host' ? 'Chủ tọa 👑' : 'Thành viên';
+        }
+        if (selfDisplayName) selfDisplayName.textContent = roomData.display_name;
+        if (selfPeerId) selfPeerId.textContent = roomData.peer_id;
+
+        // Reset logs & chat
+        if (signalingLogsBox) {
+            signalingLogsBox.innerHTML = '<div class="log-entry log-system">[Hệ thống] Đang khởi tạo kết nối WebSocket...</div>';
+        }
+        if (chatMessagesContainer) {
+            chatMessagesContainer.innerHTML = '<div class="chat-system-message">Chào mừng bạn vào phòng họp! Mọi tin nhắn sẽ được đồng bộ tức thì qua WebSocket.</div>';
+        }
+        renderOnlinePeers();
+
+        // Kết nối WebSocket Signaling
+        connectMeetingWebSocket(roomData.room_code, roomData.display_name, currentPasscode);
+    }
+
+    function connectMeetingWebSocket(roomCode, displayName, passcode) {
+        if (currentMeetingSocket) {
+            try { currentMeetingSocket.close(); } catch (e) {}
+            currentMeetingSocket = null;
+        }
+
+        updateWsStatus('connecting', 'Đang kết nối WebSocket...');
+        logSignaling('system', `Bắt đầu kết nối ws/meetings/${roomCode}/...`);
+
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}/ws/meetings/${encodeURIComponent(roomCode)}/`;
+
+        // Chuẩn bảo mật Subprotocol: 'bearer', <access_token>
+        const token = getAccessToken();
+        const subprotocols = token ? ['bearer', token] : [];
+
+        try {
+            currentMeetingSocket = new WebSocket(wsUrl, subprotocols);
+        } catch (err) {
+            updateWsStatus('disconnected', 'Không thể tạo kết nối WebSocket');
+            logSignaling('err', `Lỗi kết nối: ${err.message}`);
+            return;
+        }
+
+        currentMeetingSocket.onopen = () => {
+            updateWsStatus('connected', `Đã kết nối (Group: room_${roomCode})`);
+            logSignaling('system', `WebSocket đã mở (READY). Gửi thông điệp join_room...`);
+
+            // Gửi thông điệp join_room chuẩn JSON Envelope
+            const reqId = 'req_' + Date.now();
+            const joinPayload = {
+                display_name: displayName,
+                passcode: passcode || ''
+            };
+            if (token) {
+                joinPayload.token = token;
+            }
+
+            sendSignalingPacket('join_room', joinPayload, reqId);
+        };
+
+        currentMeetingSocket.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                handleIncomingMessage(msg);
+            } catch (err) {
+                logSignaling('err', `Nhận dữ liệu không phải JSON: ${event.data}`);
+            }
+        };
+
+        currentMeetingSocket.onerror = (err) => {
+            logSignaling('err', 'Sự kiện lỗi WebSocket phát sinh.');
+        };
+
+        currentMeetingSocket.onclose = (event) => {
+            updateWsStatus('disconnected', `Đã ngắt kết nối (Mã: ${event.code})`);
+            logSignaling('err', `WebSocket đóng. Code: ${event.code}, Reason: ${event.reason || 'None'}`);
+
+            if (event.code === 4001) {
+                showToast('Chưa xác thực JWT. Vui lòng đăng nhập lại.', 'error');
+            } else if (event.code === 4003) {
+                showToast('Từ chối truy cập: Sai mật khẩu phòng hoặc phòng đầy.', 'error');
+            } else if (event.code === 4004) {
+                showToast('Phòng họp không tồn tại.', 'error');
+            } else if (event.code === 4005) {
+                showToast('Phòng họp này đã kết thúc/đóng.', 'error');
+            }
+        };
+    }
+
+    function handleIncomingMessage(msg) {
+        const { type, request_id, payload } = msg;
+        logSignaling('in', `[RX] ${type}: ${JSON.stringify(payload || {})}`);
+
+        switch (type) {
+            case 'online_list': {
+                onlinePeersMap.clear();
+                const peers = payload?.peers || [];
+                peers.forEach(p => {
+                    onlinePeersMap.set(p.peer_id, p);
+                });
+                renderOnlinePeers();
+                break;
+            }
+            case 'user_joined': {
+                const user = payload?.user;
+                if (user && user.peer_id) {
+                    onlinePeersMap.set(user.peer_id, user);
+                    renderOnlinePeers();
+                    appendSystemChatMessage(`👋 ${user.display_name || 'Một thành viên'} đã tham gia phòng họp.`);
+                }
+                break;
+            }
+            case 'user_left': {
+                const peerId = payload?.peer_id;
+                const user = onlinePeersMap.get(peerId);
+                const name = user ? user.display_name : (payload?.display_name || peerId);
+                if (peerId) {
+                    onlinePeersMap.delete(peerId);
+                    renderOnlinePeers();
+                    appendSystemChatMessage(`🚪 ${name} đã rời khỏi phòng họp.`);
+                }
+                break;
+            }
+            case 'chat_message': {
+                appendChatMessageBubble(payload);
+                break;
+            }
+            case 'offer': {
+                const sender = payload?.sender_peer_id;
+                const peerObj = onlinePeersMap.get(sender);
+                const sName = peerObj ? peerObj.display_name : sender;
+                showToast(`Nhận SDP Offer từ [${sName}]`, 'info');
+                appendSystemChatMessage(`📨 Nhận SDP Offer từ [${sName}]. WebRTC sẵn sàng đàm phán.`);
+                break;
+            }
+            case 'answer': {
+                const sender = payload?.sender_peer_id;
+                const peerObj = onlinePeersMap.get(sender);
+                const sName = peerObj ? peerObj.display_name : sender;
+                showToast(`Nhận SDP Answer từ [${sName}]`, 'info');
+                appendSystemChatMessage(`📬 Nhận SDP Answer từ [${sName}]. Bắt tay WebRTC thành công.`);
+                break;
+            }
+            case 'ice_candidate': {
+                const sender = payload?.sender_peer_id;
+                showToast(`Nhận ICE Candidate từ ${sender}`, 'info');
+                break;
+            }
+            case 'error': {
+                const errMsg = payload?.message || 'Lỗi từ Signaling Server';
+                showToast(`Lỗi WebSocket: ${errMsg}`, 'error');
+                logSignaling('err', `[Server Error] ${payload?.code}: ${errMsg}`);
+                break;
+            }
+            default:
+                logSignaling('system', `Thông điệp chưa hỗ trợ: ${type}`);
+        }
+    }
+
+    function sendSignalingPacket(type, payload, requestId = null) {
+        if (!currentMeetingSocket || currentMeetingSocket.readyState !== WebSocket.OPEN) {
+            showToast('WebSocket chưa kết nối!', 'warning');
+            return false;
+        }
+        const packet = {
+            type: type,
+            request_id: requestId || ('req_' + Date.now()),
+            payload: payload || {}
+        };
+        const raw = JSON.stringify(packet);
+        currentMeetingSocket.send(raw);
+        logSignaling('out', `[TX] ${type}: ${JSON.stringify(payload)}`);
+        return true;
+    }
+
+    function updateWsStatus(state, text) {
+        if (!wsStatusBadge || !wsStatusText) return;
+        wsStatusBadge.className = `ws-status-badge ${state}`;
+        wsStatusText.textContent = text;
+    }
+
+    function logSignaling(type, text) {
+        if (!signalingLogsBox) return;
+        const time = new Date().toLocaleTimeString('vi-VN');
+        const entry = document.createElement('div');
+        entry.className = `log-entry log-${type}`;
+        entry.textContent = `[${time}] ${text}`;
+        signalingLogsBox.appendChild(entry);
+        signalingLogsBox.scrollTop = signalingLogsBox.scrollHeight;
+
+        // Giới hạn 100 dòng log
+        if (signalingLogsBox.children.length > 100) {
+            signalingLogsBox.removeChild(signalingLogsBox.firstChild);
+        }
+    }
+
+    function renderOnlinePeers() {
+        if (!onlinePeersList) return;
+
+        // Lọc các peer khác (loại bỏ bản thân theo peer_id)
+        const myPeerId = currentRoomData?.peer_id;
+        const otherPeers = Array.from(onlinePeersMap.values()).filter(p => p.peer_id !== myPeerId);
+
+        // Cập nhật tổng số thành viên online (bao gồm bản thân)
+        if (onlinePeerCount) {
+            onlinePeerCount.textContent = otherPeers.length + 1;
+        }
+
+        // Cập nhật dropdown chọn peer nhận signaling
+        if (selectTargetPeer) {
+            const currentSelected = selectTargetPeer.value;
+            selectTargetPeer.innerHTML = '';
+
+            if (otherPeers.length === 0) {
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = '-- Chưa có peer nào khác --';
+                selectTargetPeer.appendChild(opt);
+                btnSendOffer.disabled = true;
+                btnSendAnswer.disabled = true;
+                btnSendIce.disabled = true;
+            } else {
+                otherPeers.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.peer_id;
+                    opt.textContent = `${p.display_name} (${p.peer_id.slice(0, 8)}...)`;
+                    if (p.peer_id === currentSelected) opt.selected = true;
+                    selectTargetPeer.appendChild(opt);
+                });
+                btnSendOffer.disabled = false;
+                btnSendAnswer.disabled = false;
+                btnSendIce.disabled = false;
+            }
+        }
+
+        // Render danh sách peer items
+        onlinePeersList.innerHTML = '';
+        if (otherPeers.length === 0) {
+            onlinePeersList.innerHTML = '<div class="empty-peers-notice">Chưa có thành viên nào khác trong phòng...</div>';
+            return;
+        }
+
+        otherPeers.forEach(peer => {
+            const item = document.createElement('div');
+            item.className = 'peer-item';
+            const initial = (peer.display_name || 'U').charAt(0).toUpperCase();
+
+            item.innerHTML = `
+                <div class="peer-item-info">
+                    <div class="peer-item-avatar">${initial}</div>
+                    <div>
+                        <div class="peer-item-name">${escapeHTML(peer.display_name)}</div>
+                        <div class="peer-item-meta">${peer.peer_id.slice(0, 8)}...</div>
+                    </div>
+                </div>
+                <div class="peer-actions">
+                    <span class="peer-item-role">${peer.role === 'host' ? 'Chủ tọa 👑' : 'Thành viên'}</span>
+                    <button class="btn btn-xs btn-outline-primary btn-quick-offer" data-peer="${peer.peer_id}" title="Gửi Offer SDP">
+                        📨 Offer
+                    </button>
+                </div>
+            `;
+
+            // Nút gửi Offer nhanh
+            const quickBtn = item.querySelector('.btn-quick-offer');
+            quickBtn.addEventListener('click', () => {
+                sendTestSignaling('offer', peer.peer_id);
+            });
+
+            onlinePeersList.appendChild(item);
+        });
+    }
+
+    function appendChatMessageBubble(payload) {
+        if (!chatMessagesContainer) return;
+
+        const isSelf = payload.sender_peer_id === currentRoomData?.peer_id;
+        const bubble = document.createElement('div');
+        bubble.className = `chat-bubble ${isSelf ? 'self' : ''}`;
+
+        const senderName = isSelf ? 'Bạn' : (payload.sender_name || 'Ẩn danh');
+        const time = new Date(payload.timestamp || Date.now()).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+
+        bubble.innerHTML = `
+            <div class="chat-bubble-sender">
+                <span>${escapeHTML(senderName)}</span>
+                ${!isSelf ? `<span class="peer-id-meta">(${payload.sender_peer_id?.slice(0, 6)}...)</span>` : ''}
+            </div>
+            <div class="chat-bubble-text">${escapeHTML(payload.message)}</div>
+            <div class="chat-bubble-time">${time}</div>
+        `;
+
+        chatMessagesContainer.appendChild(bubble);
+        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }
+
+    function appendSystemChatMessage(text) {
+        if (!chatMessagesContainer) return;
+        const msg = document.createElement('div');
+        msg.className = 'chat-system-message';
+        msg.textContent = text;
+        chatMessagesContainer.appendChild(msg);
+        chatMessagesContainer.scrollTop = chatMessagesContainer.scrollHeight;
+    }
+
+    function sendTestSignaling(type, targetPeerId) {
+        if (!targetPeerId) {
+            targetPeerId = selectTargetPeer ? selectTargetPeer.value : '';
+        }
+        if (!targetPeerId) {
+            showToast('Vui lòng chọn Peer nhận (Target Peer)!', 'warning');
+            return;
+        }
+
+        let payload = {
+            target_peer_id: targetPeerId
+        };
+
+        if (type === 'offer') {
+            payload.sdp = {
+                type: 'offer',
+                sdp: 'v=0\r\no=- 42000 2 IN IP4 127.0.0.1\r\ns=AI Meeting WebRTC Test Session\r\nt=0 0\r\na=sendrecv\r\n'
+            };
+        } else if (type === 'answer') {
+            payload.sdp = {
+                type: 'answer',
+                sdp: 'v=0\r\no=- 42001 2 IN IP4 127.0.0.1\r\ns=AI Meeting WebRTC Test Session Answer\r\nt=0 0\r\na=recvonly\r\n'
+            };
+        } else if (type === 'ice_candidate') {
+            payload.candidate = {
+                candidate: 'candidate:842163049 1 udp 1677729535 192.168.1.100 54321 typ host',
+                sdpMid: '0',
+                sdpMLineIndex: 0
+            };
+        }
+
+        const sent = sendSignalingPacket(type, payload);
+        if (sent) {
+            showToast(`Đã gửi ${type.toUpperCase()} tới Peer ${targetPeerId.slice(0, 8)}...`, 'info');
+        }
+    }
+
+    function leaveMeetingRoom() {
+        if (currentMeetingSocket && currentMeetingSocket.readyState === WebSocket.OPEN) {
+            sendSignalingPacket('leave_room', {});
+            try { currentMeetingSocket.close(); } catch (e) {}
+        }
+        currentMeetingSocket = null;
+        currentRoomData = null;
+        currentPasscode = '';
+        onlinePeersMap.clear();
+
+        // Ẩn phòng họp
+        if (meetingRoomSection) meetingRoomSection.classList.add('hidden');
+
+        // Quay lại màn hình tương ứng
+        renderAuthUI();
+        if (getAccessToken()) {
+            loadHostedRooms();
+        }
+        showToast('Đã rời khỏi phòng họp.', 'info');
+    }
+
+    // =========================================================================
+    // 9. Event Listeners cho Tuần 3 UI
+    // =========================================================================
+
+    // Rời phòng
+    if (btnLeaveMeetingTop) {
+        btnLeaveMeetingTop.addEventListener('click', () => leaveMeetingRoom());
+    }
+    if (btnLeaveMeetingBottom) {
+        btnLeaveMeetingBottom.addEventListener('click', () => leaveMeetingRoom());
+    }
+
+    // Sao chép mã phòng trong meeting room view
+    if (btnCopyRoomViewCode) {
+        btnCopyRoomViewCode.addEventListener('click', () => {
+            if (currentRoomData?.room_code) {
+                navigator.clipboard.writeText(currentRoomData.room_code);
+                btnCopyRoomViewCode.textContent = 'Đã chép!';
+                setTimeout(() => { btnCopyRoomViewCode.textContent = '📋 Chép mã'; }, 1500);
+            }
+        });
+    }
+
+    // Xóa logs
+    if (btnClearSignalingLogs) {
+        btnClearSignalingLogs.addEventListener('click', () => {
+            if (signalingLogsBox) {
+                signalingLogsBox.innerHTML = '<div class="log-entry log-system">[Hệ thống] Đã xóa toàn bộ log.</div>';
+            }
+        });
+    }
+
+    // Gửi chat
+    if (formSendChat) {
+        formSendChat.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const text = inputChatMessage.value.trim();
+            if (!text) return;
+
+            const sent = sendSignalingPacket('chat_message', { message: text });
+            if (sent) {
+                inputChatMessage.value = '';
+            }
+        });
+    }
+
+    // Nút gửi Signaling Simulator
+    if (btnSendOffer) {
+        btnSendOffer.addEventListener('click', () => {
+            sendTestSignaling('offer');
+        });
+    }
+    if (btnSendAnswer) {
+        btnSendAnswer.addEventListener('click', () => {
+            sendTestSignaling('answer');
+        });
+    }
+    if (btnSendIce) {
+        btnSendIce.addEventListener('click', () => {
+            sendTestSignaling('ice_candidate');
+        });
+    }
+
+    // Nút toolbar media giả lập (Tuần 4 Preview)
+    if (btnToggleMic) {
+        btnToggleMic.addEventListener('click', () => {
+            btnToggleMic.classList.toggle('active');
+            btnToggleMic.classList.toggle('muted');
+            const isMuted = btnToggleMic.classList.contains('muted');
+            btnToggleMic.innerHTML = isMuted ? '🔇 Mic Tắt' : '🎤 Mic Bật';
+            showToast(isMuted ? 'Đã tắt Micro (Audio Track Muted)' : 'Đã bật Micro', 'info');
+        });
+    }
+    if (btnToggleCam) {
+        btnToggleCam.addEventListener('click', () => {
+            btnToggleCam.classList.toggle('active');
+            btnToggleCam.classList.toggle('muted');
+            const isOff = btnToggleCam.classList.contains('muted');
+            btnToggleCam.innerHTML = isOff ? '🚫 Cam Tắt' : '📹 Cam Bật';
+            showToast(isOff ? 'Đã tắt Camera (Video Track Stopped)' : 'Đã bật Camera', 'info');
+        });
+    }
+    if (btnToggleScreen) {
+        btnToggleScreen.addEventListener('click', () => {
+            btnToggleScreen.classList.toggle('active');
+            showToast('Chia sẻ màn hình (getDisplayMedia) sẽ kết nối WebRTC Media trong Tuần 4.', 'info');
+        });
+    }
 
     // Helper escape HTML ngăn chặn XSS
     function escapeHTML(str) {

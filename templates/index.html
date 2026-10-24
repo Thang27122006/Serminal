@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
 
-{% block title %}AI Meeting - Xác thực JWT & Quản lý Phòng họp (Tuần 2){% endblock %}
+{% block title %}AI Meeting - Django Channels & WebSocket Signaling (Tuần 3){% endblock %}
 
 {% block content %}
 <div class="container main-dashboard">
@@ -12,7 +12,7 @@
     <!-- ============================================================== -->
     <div id="guestSection" class="guest-section">
         <div class="hero-section">
-            <div class="badge-pill">Tuần 2: Authentication, JWT & Room Management</div>
+            <div class="badge-pill">Tuần 3: Django Channels, Redis & WebSocket Signaling</div>
             <h1 class="hero-title">Hội Thảo Trực Tuyến Nhanh Chóng & An Toàn</h1>
             <p class="hero-subtitle">
                 Đăng nhập bằng tài khoản để tạo phòng họp bảo mật, hoặc tham gia phòng họp bằng mã phòng.
@@ -249,7 +249,157 @@
     </div>
 
     <!-- ============================================================== -->
-    <!-- PHẦN 3: MODAL THÔNG TIN PHÒNG HỌP KHI THAM GIA THÀNH CÔNG       -->
+    <!-- PHẦN 3: GIAO DIỆN PHÒNG HỌP WEBSOCKET TRỰC TIẾP (TUẦN 3)         -->
+    <!-- ============================================================== -->
+    <div id="meetingRoomSection" class="meeting-room-section hidden">
+        <!-- Room Control Topbar -->
+        <div class="room-topbar">
+            <div class="room-topbar-info">
+                <button type="button" id="btnLeaveMeetingTop" class="btn btn-sm btn-outline-danger">
+                    ← Rời phòng
+                </button>
+                <div class="room-topbar-title">
+                    <h2 id="roomViewTitle">Phòng họp trực tuyến</h2>
+                    <div class="room-topbar-meta">
+                        <span class="badge-code" id="roomViewCode">---</span>
+                        <button id="btnCopyRoomViewCode" class="btn btn-xs btn-outline-secondary" title="Sao chép mã phòng">📋 Chép mã</button>
+                        <span class="room-role-pill" id="roomViewRole">Thành viên</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="room-topbar-status">
+                <div id="wsStatusBadge" class="ws-status-badge connecting">
+                    <span class="status-dot"></span>
+                    <span id="wsStatusText">Đang kết nối WebSocket...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Room Workspace Grid -->
+        <div class="room-workspace-grid">
+            <!-- Cột trái: Thành viên trực tuyến & Console Signaling P2P -->
+            <div class="room-col-left">
+                <!-- Card 1: Thành viên trực tuyến -->
+                <div class="dashboard-card room-panel-card">
+                    <div class="card-header-flex">
+                        <div>
+                            <h3>👥 Thành viên trực tuyến (<span id="onlinePeerCount">0</span>)</h3>
+                            <p class="text-muted">Quản lý theo thời gian thực bởi Presence Manager</p>
+                        </div>
+                    </div>
+
+                    <!-- Thông tin bản thân -->
+                    <div class="self-peer-box">
+                        <div class="peer-avatar self-avatar">Tôi</div>
+                        <div class="peer-info">
+                            <div class="peer-name">
+                                <strong id="selfDisplayName">Bạn</strong>
+                                <span class="badge-self">Bản thân</span>
+                            </div>
+                            <div class="peer-id-meta">Peer ID: <code id="selfPeerId">---</code></div>
+                        </div>
+                    </div>
+
+                    <!-- Danh sách các thành viên khác -->
+                    <div class="online-peers-list" id="onlinePeersList">
+                        <div class="empty-peers-notice">Chưa có thành viên nào khác trong phòng...</div>
+                    </div>
+                </div>
+
+                <!-- Card 2: Công cụ WebRTC Signaling P2P Simulator -->
+                <div class="dashboard-card room-panel-card signaling-card">
+                    <div class="card-header-flex">
+                        <div>
+                            <h3>⚡ Chuyển tiếp WebRTC Signaling</h3>
+                            <p class="text-muted">Kiểm chứng SDP Offer / Answer & ICE Candidate</p>
+                        </div>
+                        <button id="btnClearSignalingLogs" class="btn btn-xs btn-outline-secondary">Xóa log</button>
+                    </div>
+
+                    <div class="signaling-control-box">
+                        <div class="form-group mb-2">
+                            <label for="selectTargetPeer" class="text-xs">Chọn Peer nhận (Target Peer):</label>
+                            <select id="selectTargetPeer" class="form-input form-input-sm">
+                                <option value="">-- Chưa có peer nào khác --</option>
+                            </select>
+                        </div>
+
+                        <div class="signaling-btn-group">
+                            <button id="btnSendOffer" class="btn btn-xs btn-primary" disabled>
+                                📨 Gửi Offer
+                            </button>
+                            <button id="btnSendAnswer" class="btn btn-xs btn-accent" disabled>
+                                📬 Gửi Answer
+                            </button>
+                            <button id="btnSendIce" class="btn btn-xs btn-secondary" disabled>
+                                ❄️ Gửi ICE Candidate
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Log Console -->
+                    <div class="signaling-logs-header">
+                        <span class="text-xs text-muted">Nhật ký gói tin WebSocket Signaling (Realtime Traffic):</span>
+                    </div>
+                    <div class="signaling-logs-box" id="signalingLogsBox">
+                        <div class="log-entry log-system">[Hệ thống] Sẵn sàng ghi nhận thông điệp signaling...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Cột phải: Chat WebSocket Thời Gian Thực -->
+            <div class="room-col-right">
+                <div class="dashboard-card room-panel-card chat-panel-card">
+                    <div class="card-header-flex">
+                        <div>
+                            <h3>💬 Tin nhắn phòng họp</h3>
+                            <p class="text-muted">Kênh trao đổi nội bộ group Django Channels</p>
+                        </div>
+                    </div>
+
+                    <!-- Khung tin nhắn cuộn -->
+                    <div class="chat-messages-container" id="chatMessagesContainer">
+                        <div class="chat-system-message">Chào mừng bạn vào phòng họp! Mọi tin nhắn sẽ được đồng bộ tức thì qua WebSocket.</div>
+                    </div>
+
+                    <!-- Ô nhập tin nhắn -->
+                    <form id="formSendChat" class="chat-input-form">
+                        <input type="text" id="inputChatMessage" class="form-input" placeholder="Nhập tin nhắn... (Nhấn Enter để gửi)" autocomplete="off">
+                        <button type="submit" id="btnSendChatMessage" class="btn btn-primary">
+                            Gửi
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Thanh điều khiển hội thoại phía dưới (Preview Tuần 4) -->
+        <div class="room-bottom-toolbar">
+            <div class="toolbar-left">
+                <span class="toolbar-room-info"><strong id="toolbarRoomTitle">Phòng họp</strong> (<span id="toolbarRoomCode">---</span>)</span>
+            </div>
+            <div class="toolbar-center">
+                <button type="button" class="btn-tool active" id="btnToggleMic" title="Bật/Tắt Micro">
+                    🎤 Mic
+                </button>
+                <button type="button" class="btn-tool active" id="btnToggleCam" title="Bật/Tắt Camera">
+                    📹 Camera
+                </button>
+                <button type="button" class="btn-tool" id="btnToggleScreen" title="Chia sẻ màn hình">
+                    🖥️ Màn hình
+                </button>
+            </div>
+            <div class="toolbar-right">
+                <button type="button" id="btnLeaveMeetingBottom" class="btn btn-danger">
+                    🚪 Rời phòng họp
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ============================================================== -->
+    <!-- PHẦN 4: MODAL THÔNG TIN PHÒNG HỌP KHI THAM GIA THÀNH CÔNG       -->
     <!-- ============================================================== -->
     <div id="roomModal" class="modal-backdrop hidden">
         <div class="modal-box">
@@ -274,49 +424,49 @@
                         <span class="info-value" id="modalRole">-</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-label">Peer ID (WebRTC Session):</span>
+                        <span class="info-label">Peer ID:</span>
                         <span class="info-value text-code" id="modalPeerId">-</span>
                     </div>
                 </div>
                 <div class="modal-notice">
-                    <p>💡 <em>Hạ tầng xác thực JWT và cơ sở dữ liệu phòng họp đã sẵn sàng. Giao diện WebRTC Video Grid và Signaling thời gian thực sẽ được kết nối chính thức trong Tuần 3.</em></p>
+                    <p>💡 <em>Hạ tầng WebSocket Signaling và Room Presence đã sẵn sàng hoạt động. Bấm nút dưới để kết nối vào phòng họp trực tiếp ngay bây giờ.</em></p>
                 </div>
             </div>
             <div class="modal-footer">
-                <button type="button" class="btn btn-primary" id="btnProceedMeeting">Tiếp tục đến phòng chờ</button>
+                <button type="button" class="btn btn-primary" id="btnProceedMeeting">Vào phòng họp ngay</button>
             </div>
         </div>
     </div>
 
     <!-- ============================================================== -->
-    <!-- PHẦN 4: THÔNG TIN HẠ TẦNG VÀ TÀI LIỆU TUẦN 2                    -->
+    <!-- PHẦN 5: THÔNG TIN HẠ TẦNG VÀ TÀI LIỆU TUẦN 3                    -->
     <!-- ============================================================== -->
     <div class="tech-stack-section">
-        <h3 class="section-title">Hạ Tầng Công Nghệ Tuần 2</h3>
+        <h3 class="section-title">Hạ Tầng Công Nghệ Tuần 3 (WebSocket Signaling)</h3>
         <div class="tech-grid">
             <div class="tech-card">
-                <div class="tech-icon">🔑</div>
-                <h4>JWT Authentication</h4>
-                <p>SimpleJWT: Access Token (60 phút), Refresh Token (7 ngày) & Blacklist</p>
-                <span class="status-indicator active">Đã tích hợp</span>
-            </div>
-            <div class="tech-card">
-                <div class="tech-icon">🛡️</div>
-                <h4>Access Control</h4>
-                <p>Kiểm tra quyền Backend: Phòng riêng tư, Passcode & Capacity Check</p>
-                <span class="status-indicator active">Bảo mật</span>
-            </div>
-            <div class="tech-card">
-                <div class="tech-icon">🐘</div>
-                <h4>PostgreSQL Storage</h4>
-                <p>Lưu trữ Users, MeetingRoom, MeetingParticipant, Token Blacklist</p>
+                <div class="tech-icon">⚡</div>
+                <h4>Django Channels & Daphne</h4>
+                <p>ASGI Server bất đồng bộ xử lý WebSocket song song với HTTP REST API</p>
                 <span class="status-indicator active">Hoạt động</span>
             </div>
             <div class="tech-card">
-                <div class="tech-icon">⚡</div>
-                <h4>Daphne / ASGI</h4>
-                <p>Sẵn sàng cho Django Channels WebSocket Signaling ở Tuần 3</p>
+                <div class="tech-icon">🔴</div>
+                <h4>Redis Channel Layer</h4>
+                <p>Phân phối thông điệp đa quy trình (Multi-process IPC) và Broadcast Group</p>
                 <span class="status-indicator active">Sẵn sàng</span>
+            </div>
+            <div class="tech-card">
+                <div class="tech-icon">🛡️</div>
+                <h4>WebSocket Authentication</h4>
+                <p>Xác thực JWT an toàn qua Sec-WebSocket-Protocol (không lộ trên URL Query)</p>
+                <span class="status-indicator active">Bảo mật</span>
+            </div>
+            <div class="tech-card">
+                <div class="tech-icon">📡</div>
+                <h4>Signaling P2P Protocol</h4>
+                <p>Chuyển tiếp SDP Offer/Answer và ICE Candidate có kiểm tra phân quyền phòng</p>
+                <span class="status-indicator active">Chuẩn hóa</span>
             </div>
         </div>
     </div>

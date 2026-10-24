@@ -3,6 +3,7 @@ Django settings for AI Meeting project.
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 from dotenv import load_dotenv
@@ -91,7 +92,14 @@ ASGI_APPLICATION = 'core.asgi.application'
 # Default to PostgreSQL, with flexible fallback to SQLite for local rapid dev/tests
 DB_ENGINE = os.getenv('DB_ENGINE', 'postgresql').lower()
 
-if DB_ENGINE == 'postgresql' and os.getenv('DB_NAME'):
+if 'test' in sys.argv:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
+elif DB_ENGINE == 'postgresql' and os.getenv('DB_NAME'):
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',

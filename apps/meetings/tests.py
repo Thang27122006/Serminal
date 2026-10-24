@@ -1,11 +1,14 @@
+import json
 from django.test import TestCase
 from django.contrib.auth.models import User
 from rest_framework.test import APIClient
 from rest_framework import status
 from rest_framework_simplejwt.tokens import RefreshToken
 from channels.testing import WebsocketCommunicator
+from channels.db import database_sync_to_async
 from core.asgi import application
 from apps.meetings.models import MeetingRoom, MeetingParticipant
+from apps.meetings.presence import RoomPresenceManager
 
 
 class MeetingAPITests(TestCase):
@@ -46,7 +49,6 @@ class MeetingAPITests(TestCase):
         room_data = response.data['data']
         self.assertTrue(room_data['is_private'])
         self.assertTrue(room_data['has_passcode'])
-        # Đảm bảo KHÔNG lộ passcode trong response
         self.assertNotIn('passcode', room_data)
 
     def test_create_private_room_without_passcode_fails(self):
@@ -94,9 +96,6 @@ class MeetingAPITests(TestCase):
         response = self.client.get(f"/api/v1/rooms/{room.room_code}/")
         self.assertEqual(response.status_code, status.HTTP_410_GONE)
 
-    # --------------------------------------------------------------------------
-    # Tests cho API Join Room & Access Control (Backend Permissions)
-    # --------------------------------------------------------------------------
     def test_join_public_room_authenticated(self):
         room = MeetingRoom.objects.create(title="Phòng công khai", host=self.host_user)
         normal_user = User.objects.create_user(username='guestuser', email='g@example.com', password='123')
@@ -167,7 +166,6 @@ class MeetingAPITests(TestCase):
             is_private=True,
             passcode="CorrectPass123"
         )
-        # Host vào phòng của chính mình không cần pass
         response = self.client.post(f"/api/v1/rooms/{room.room_code}/join/", {}, format='json', **self.auth_headers)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertTrue(response.data['data']['is_host'])
@@ -179,55 +177,413 @@ class MeetingAPITests(TestCase):
             host=self.host_user,
             max_participants=2
         )
-        # Tạo sẵn 2 người trong phòng
         MeetingParticipant.objects.create(room=room, display_name="P1", peer_id="peer-1", status='joined')
         MeetingParticipant.objects.create(room=room, display_name="P2", peer_id="peer-2", status='joined')
 
-        # Người thứ 3 cố gắng vào
         response = self.client.post(f"/api/v1/rooms/{room.room_code}/join/", {"display_name": "P3"}, format='json')
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(response.data['error']['code'], 'ROOM_FULL')
 
 
 class WebSocketSignalingTests(TestCase):
-    async def test_websocket_signaling_connect_and_join(self):
+    def setUp(self):
+        self.host_user = User.objects.create_user(
+            username='ws_host',
+            email='ws_host@example.com',
+            password='Password123'
+        )
+        self.client_user = User.objects.create_user(
+            username='ws_client',
+            email='ws_client@example.com',
+            password='Password123'
+        )
+        self.host_token = str(RefreshToken.for_user(self.host_user).access_token)
+        self.client_token = str(RefreshToken.for_user(self.client_user).access_token)
+
+        self.room = MeetingRoom.objects.create(
+            room_code='test-room-w3',
+            title='Phòng Kiểm Thử Tuần 3',
+            host=self.host_user,
+            is_active=True,
+            max_participants=6
+        )
+
+    def tearDown(self):
+        from asgiref.sync import async_to_sync
+        async_to_sync(RoomPresenceManager.clear_all)()
+
+    async def test_websocket_connect_and_join_with_jwt_subprotocol(self):
         headers = [
             (b"origin", b"http://localhost"),
             (b"host", b"localhost"),
         ]
         communicator = WebsocketCommunicator(
             application,
-            "/ws/meeting/test-room-123/",
-            headers=headers
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
         )
         connected, subprotocol = await communicator.connect()
         self.assertTrue(connected)
+        self.assertEqual(subprotocol, 'bearer')
 
         # Gửi thông điệp join_room
         await communicator.send_json_to({
             "type": "join_room",
+            "request_id": "req-join-1",
             "payload": {
-                "peer_id": "test-peer-uuid-1",
-                "display_name": "Tester A"
+                "peer_id": "peer-w3-1"
             }
         })
 
-        # Nhận phản hồi room_state
-        response = await communicator.receive_json_from()
-        self.assertEqual(response['type'], 'room_state')
-        self.assertEqual(response['payload']['self_peer_id'], 'test-peer-uuid-1')
+        # Nhận phản hồi online_list
+        resp = await communicator.receive_json_from()
+        self.assertEqual(resp['type'], 'online_list')
+        self.assertEqual(resp['request_id'], 'req-join-1')
+        self.assertEqual(resp['payload']['self']['peer_id'], 'peer-w3-1')
 
-        # Test gửi tin nhắn chat và nhận broadcast
+        await communicator.disconnect()
+
+    async def test_websocket_join_room_with_token_in_payload(self):
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        # Gửi join_room với token trong payload
+        await communicator.send_json_to({
+            "type": "join_room",
+            "request_id": "req-join-payload",
+            "payload": {
+                "peer_id": "peer-payload-auth",
+                "token": self.client_token
+            }
+        })
+
+        resp = await communicator.receive_json_from()
+        self.assertEqual(resp['type'], 'online_list')
+        self.assertEqual(resp['payload']['self']['peer_id'], 'peer-payload-auth')
+        await communicator.disconnect()
+
+    async def test_websocket_join_nonexistent_room_closes_4004(self):
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+        communicator = WebsocketCommunicator(
+            application,
+            "/ws/meeting/non-existent-code/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        connected, _ = await communicator.connect()
+        self.assertTrue(connected)
+
+        await communicator.send_json_to({
+            "type": "join_room",
+            "payload": {"peer_id": "peer-test"}
+        })
+
+        resp = await communicator.receive_json_from()
+        self.assertEqual(resp['type'], 'error')
+        self.assertEqual(resp['payload']['code'], 'ROOM_NOT_FOUND')
+
+        close_event = await communicator.receive_output()
+        self.assertEqual(close_event['type'], 'websocket.close')
+        self.assertEqual(close_event['code'], 4004)
+
+        try:
+            await communicator.disconnect()
+        except Exception:
+            pass
+
+    async def test_websocket_join_private_room_access_control(self):
+        private_room = await database_sync_to_async(MeetingRoom.objects.create)(
+            room_code='private-room-w3',
+            title='Phòng Riêng Tư',
+            host=self.host_user,
+            is_active=True,
+            is_private=True,
+            passcode='SuperSecretPass'
+        )
+
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+
+        # 1. Thử tham gia với sai mật khẩu -> bị từ chối với ACCESS_DENIED
+        comm_wrong = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{private_room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        await comm_wrong.connect()
+        await comm_wrong.send_json_to({
+            "type": "join_room",
+            "payload": {"peer_id": "peer-wrong-pass", "passcode": "WrongPassword"}
+        })
+        resp_err = await comm_wrong.receive_json_from()
+        self.assertEqual(resp_err['type'], 'error')
+        self.assertEqual(resp_err['payload']['code'], 'ACCESS_DENIED')
+
+        close_event = await comm_wrong.receive_output()
+        self.assertEqual(close_event['type'], 'websocket.close')
+        self.assertEqual(close_event['code'], 4003)
+
+        try:
+            await comm_wrong.disconnect()
+        except Exception:
+            pass
+
+        # 2. Tham gia với mật khẩu đúng -> thành công nhận online_list
+        comm_ok = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{private_room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        await comm_ok.connect()
+        await comm_ok.send_json_to({
+            "type": "join_room",
+            "payload": {"peer_id": "peer-right-pass", "passcode": "SuperSecretPass"}
+        })
+        resp_ok = await comm_ok.receive_json_from()
+        self.assertEqual(resp_ok['type'], 'online_list')
+        self.assertEqual(resp_ok['payload']['self']['peer_id'], 'peer-right-pass')
+        await comm_ok.disconnect()
+
+    async def test_websocket_targeted_signaling_and_presence_flow(self):
+        """
+        Kiểm thử quy trình bắt tay signaling điểm-tới-điểm:
+        1. Peer 1 join.
+        2. Peer 2 join -> Peer 2 nhận online_list có Peer 1; Peer 1 nhận user_joined có Peer 2.
+        3. Peer 1 gửi Offer trực tiếp tới Peer 2.
+        4. Peer 2 nhận Offer và phản hồi Answer tới Peer 1.
+        5. Cả hai trao đổi ICE Candidates.
+        """
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+
+        # Peer 1 (Host)
+        comm1 = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.host_token]
+        )
+        await comm1.connect()
+        await comm1.send_json_to({
+            "type": "join_room",
+            "payload": {"peer_id": "peer-host-1"}
+        })
+        list1 = await comm1.receive_json_from()
+        self.assertEqual(list1['type'], 'online_list')
+        self.assertEqual(len(list1['payload']['peers']), 0)
+
+        # Peer 2 (Client)
+        comm2 = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        await comm2.connect()
+        await comm2.send_json_to({
+            "type": "join_room",
+            "payload": {"peer_id": "peer-client-2"}
+        })
+
+        # Peer 2 nhận online_list chứa Peer 1
+        list2 = await comm2.receive_json_from()
+        self.assertEqual(list2['type'], 'online_list')
+        self.assertEqual(len(list2['payload']['peers']), 1)
+        self.assertEqual(list2['payload']['peers'][0]['peer_id'], 'peer-host-1')
+
+        # Peer 1 nhận thông báo user_joined của Peer 2
+        joined_event = await comm1.receive_json_from()
+        self.assertEqual(joined_event['type'], 'user_joined')
+        self.assertEqual(joined_event['payload']['peer_id'], 'peer-client-2')
+
+        # 3. Peer 1 gửi Offer cho Peer 2
+        offer_sdp = {"type": "offer", "sdp": "v=0...fake-sdp-offer"}
+        await comm1.send_json_to({
+            "type": "offer",
+            "request_id": "req-offer-1",
+            "payload": {
+                "target_peer_id": "peer-client-2",
+                "sdp": offer_sdp
+            }
+        })
+
+        # Peer 2 nhận Offer trực tiếp
+        offer_received = await comm2.receive_json_from()
+        self.assertEqual(offer_received['type'], 'offer')
+        self.assertEqual(offer_received['payload']['sender_peer_id'], 'peer-host-1')
+        self.assertEqual(offer_received['payload']['sdp'], offer_sdp)
+
+        # 4. Peer 2 phản hồi Answer cho Peer 1
+        answer_sdp = {"type": "answer", "sdp": "v=0...fake-sdp-answer"}
+        await comm2.send_json_to({
+            "type": "answer",
+            "request_id": "req-ans-1",
+            "payload": {
+                "target_peer_id": "peer-host-1",
+                "sdp": answer_sdp
+            }
+        })
+
+        # Peer 1 nhận Answer trực tiếp
+        answer_received = await comm1.receive_json_from()
+        self.assertEqual(answer_received['type'], 'answer')
+        self.assertEqual(answer_received['payload']['sender_peer_id'], 'peer-client-2')
+        self.assertEqual(answer_received['payload']['sdp'], answer_sdp)
+
+        # 5. Peer 1 gửi ICE Candidate cho Peer 2
+        candidate_data = {"candidate": "candidate:123...", "sdpMid": "0"}
+        await comm1.send_json_to({
+            "type": "ice_candidate",
+            "payload": {
+                "target_peer_id": "peer-client-2",
+                "candidate": candidate_data
+            }
+        })
+
+        # Peer 2 nhận ICE Candidate
+        cand_received = await comm2.receive_json_from()
+        self.assertEqual(cand_received['type'], 'ice_candidate')
+        self.assertEqual(cand_received['payload']['sender_peer_id'], 'peer-host-1')
+        self.assertEqual(cand_received['payload']['candidate'], candidate_data)
+
+        # 6. Peer 2 ngắt kết nối -> Peer 1 nhận user_left
+        await comm2.disconnect()
+        left_event = await comm1.receive_json_from()
+        self.assertEqual(left_event['type'], 'user_left')
+        self.assertEqual(left_event['payload']['peer_id'], 'peer-client-2')
+
+        await comm1.disconnect()
+
+    async def test_websocket_room_isolation(self):
+        """
+        Kiểm thử tính cô lập giữa các phòng (Room Isolation):
+        Thành viên ở Phòng A gửi chat/signaling, thành viên ở Phòng B tuyệt đối KHÔNG nhận được.
+        """
+        room_b = await database_sync_to_async(MeetingRoom.objects.create)(
+            room_code='isolated-room-b',
+            title='Phòng Biệt Lập B',
+            host=self.host_user,
+            is_active=True
+        )
+
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+
+        # Peer A vào Phòng A
+        comm_a = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.host_token]
+        )
+        await comm_a.connect()
+        await comm_a.send_json_to({"type": "join_room", "payload": {"peer_id": "peer-in-room-a"}})
+        await comm_a.receive_json_from()
+
+        # Peer B vào Phòng B
+        comm_b = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{room_b.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        await comm_b.connect()
+        await comm_b.send_json_to({"type": "join_room", "payload": {"peer_id": "peer-in-room-b"}})
+        await comm_b.receive_json_from()
+
+        # Peer A gửi tin nhắn trong Phòng A
+        await comm_a.send_json_to({
+            "type": "chat_message",
+            "payload": {"content": "Bí mật phòng A!"}
+        })
+
+        # Peer A nhận broadcast của chính phòng mình
+        chat_a = await comm_a.receive_json_from()
+        self.assertEqual(chat_a['type'], 'chat_message')
+        self.assertEqual(chat_a['payload']['content'], 'Bí mật phòng A!')
+
+        # Peer B không được nhận bất kỳ thông điệp nào từ phòng A
+        nothing_received = await comm_b.receive_nothing(timeout=0.5)
+        self.assertTrue(nothing_received)
+
+        # Peer A cố gửi signaling tới Peer B (ở phòng khác) -> phải bị từ chối
+        await comm_a.send_json_to({
+            "type": "offer",
+            "payload": {
+                "target_peer_id": "peer-in-room-b",
+                "sdp": {"type": "offer", "sdp": "..."}
+            }
+        })
+        err_cross = await comm_a.receive_json_from()
+        self.assertEqual(err_cross['type'], 'error')
+        self.assertEqual(err_cross['payload']['code'], 'TARGET_PEER_NOT_FOUND')
+
+        await comm_a.disconnect()
+        await comm_b.disconnect()
+
+    async def test_websocket_send_before_join_rejected(self):
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers,
+            subprotocols=['bearer', self.client_token]
+        )
+        await communicator.connect()
+
+        # Gửi chat_message khi chưa gọi join_room
         await communicator.send_json_to({
             "type": "chat_message",
-            "payload": {
-                "content": "Xin chào từ test case!"
-            }
+            "payload": {"content": "Chào khi chưa join"}
         })
 
-        chat_resp = await communicator.receive_json_from()
-        self.assertEqual(chat_resp['type'], 'chat_broadcast')
-        self.assertEqual(chat_resp['payload']['content'], 'Xin chào từ test case!')
+        resp = await communicator.receive_json_from()
+        self.assertEqual(resp['type'], 'error')
+        self.assertEqual(resp['payload']['code'], 'NOT_JOINED')
 
-        # Đóng kết nối an toàn
+        await communicator.disconnect()
+
+    async def test_websocket_malformed_json_handled_gracefully(self):
+        headers = [
+            (b"origin", b"http://localhost"),
+            (b"host", b"localhost"),
+        ]
+        communicator = WebsocketCommunicator(
+            application,
+            f"/ws/meeting/{self.room.room_code}/",
+            headers=headers
+        )
+        await communicator.connect()
+
+        # Gửi text không phải JSON hợp lệ
+        await communicator.send_to(text_data="{ bad json syntax without quotes")
+
+        resp = await communicator.receive_json_from()
+        self.assertEqual(resp['type'], 'error')
+        self.assertEqual(resp['payload']['code'], 'MALFORMED_JSON')
+
         await communicator.disconnect()

@@ -13,17 +13,17 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
 django_asgi_app = get_asgi_application()
 
 from channels.routing import ProtocolTypeRouter, URLRouter
-from channels.auth import AuthMiddlewareStack
 from channels.security.websocket import AllowedHostsOriginValidator
+from apps.authentication.middleware import JWTAuthMiddlewareStack
 import apps.meetings.routing
 
 application = ProtocolTypeRouter({
     # Django's ASGI application to handle traditional HTTP requests
     "http": django_asgi_app,
     
-    # WebSocket chat and WebRTC signaling handler
+    # WebSocket chat and WebRTC signaling handler with JWT authentication
     "websocket": AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
+        JWTAuthMiddlewareStack(
             URLRouter(
                 apps.meetings.routing.websocket_urlpatterns
             )

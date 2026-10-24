@@ -6,14 +6,26 @@ from django.contrib.auth.models import User
 
 
 def generate_unique_room_code():
-    """Tạo mã phòng ngẫu nhiên định dạng xxx-yyy-zzz."""
+    """Tạo mã phòng ngẫu nhiên định dạng xxx-yyy-zzz, kiểm tra tính duy nhất."""
     chars = string.ascii_lowercase + string.digits
     # Loại bỏ các ký tự dễ gây nhầm lẫn
     safe_chars = ''.join(c for c in chars if c not in ('0', 'o', '1', 'l', 'i'))
-    part1 = ''.join(secrets.choice(safe_chars) for _ in range(3))
-    part2 = ''.join(secrets.choice(safe_chars) for _ in range(3))
-    part3 = ''.join(secrets.choice(safe_chars) for _ in range(3))
-    return f"{part1}-{part2}-{part3}"
+    
+    # Thử tối đa 10 lần sinh mã ngẫu nhiên
+    for _ in range(10):
+        part1 = ''.join(secrets.choice(safe_chars) for _ in range(3))
+        part2 = ''.join(secrets.choice(safe_chars) for _ in range(3))
+        part3 = ''.join(secrets.choice(safe_chars) for _ in range(3))
+        code = f"{part1}-{part2}-{part3}"
+        # Tránh query nếu model chưa sẵn sàng (trong lúc migration)
+        try:
+            if not MeetingRoom.objects.filter(room_code=code).exists():
+                return code
+        except Exception:
+            return code
+            
+    # Fallback chuỗi an toàn
+    return f"mtg-{secrets.token_hex(4)}"
 
 
 class MeetingRoom(models.Model):
@@ -22,6 +34,8 @@ class MeetingRoom(models.Model):
     title = models.CharField(max_length=255, default='Cuộc họp mới')
     host = models.ForeignKey(User, on_delete=models.CASCADE, related_name='hosted_rooms')
     is_active = models.BooleanField(default=True, db_index=True)
+    is_private = models.BooleanField(default=False)
+    passcode = models.CharField(max_length=64, blank=True, default='')
     max_participants = models.IntegerField(default=6)
     created_at = models.DateTimeField(auto_now_add=True)
     ended_at = models.DateTimeField(null=True, blank=True)

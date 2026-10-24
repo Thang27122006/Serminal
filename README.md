@@ -1,19 +1,20 @@
 # AI MEETING — NỀN TẢNG HỘI THẢO TRỰC TUYẾN THỜI GIAN THỰC
 
-> **Đồ án / Seminar Công nghệ Phần mềm — Giai đoạn Tuần 1: Phân tích Yêu cầu & Khởi tạo Nền tảng**
+> **Đồ án / Seminar Công nghệ Phần mềm — Giai đoạn Tuần 2: Authentication, JWT & Meeting Room Management**
 
 ---
 
 ## 1. TỔNG QUAN DỰ ÁN
 
-**AI Meeting** là nền tảng hội thảo trực tuyến thời gian thực hoạt động trên trình duyệt web theo mô hình Client–Server kết hợp truyền thông P2P WebRTC Full Mesh. Hệ thống cho phép người dùng giao tiếp video/audio chất lượng cao, chia sẻ màn hình và nhắn tin tức thời mà không cần cài đặt phần mềm phụ trợ.
+**AI Meeting** là nền tảng hội thảo trực tuyến thời gian thực hoạt động trên trình duyệt web theo mô hình Client–Server kết hợp truyền thông P2P WebRTC Full Mesh. Hệ thống cho phép người dùng đăng ký, đăng nhập bảo mật bằng JSON Web Token (JWT), khởi tạo và quản lý phòng họp riêng tư/công khai, kiểm soát quyền truy cập chặt chẽ ở Backend trước khi chuyển tiếp sang phiên WebRTC.
 
 ### Công nghệ mục tiêu
-- **Frontend:** HTML5, CSS3 hiện đại, Vanilla JavaScript (ES6+).
+- **Frontend:** HTML5, CSS3 hiện đại, Vanilla JavaScript (ES6+ SPA architecture).
 - **Backend REST API:** Python 3.14+, Django 5.1+, Django REST Framework (DRF).
-- **Realtime Signaling:** Django Channels 4.0+ & Daphne (ASGI Server).
-- **Message Broker:** Redis & `channels-redis` (có chế độ InMemory fallback cho môi trường Dev).
+- **Xác thực:** JSON Web Token (`djangorestframework-simplejwt`) với Access Token (60 phút), Refresh Token (7 ngày) và cơ chế Blacklist token khi đăng xuất.
 - **Cơ sở dữ liệu:** PostgreSQL 16+ (hỗ trợ SQLite cho môi trường phát triển cục bộ).
+- **Realtime Signaling:** Django Channels 4.0+ & Daphne (ASGI Server).
+- **Message Broker:** Redis & `channels-redis` (hỗ trợ InMemory fallback).
 - **Truyền thông Media:** WebRTC Native Browser APIs (Mô hình Full Mesh cho nhóm $\le 6$ người).
 
 ---
@@ -25,39 +26,39 @@ Seminar/
 ├── core/                     # Cấu hình dự án Django & ASGI
 │   ├── __init__.py
 │   ├── asgi.py               # Cấu hình ASGI ProtocolTypeRouter (HTTP & WebSocket)
-│   ├── settings.py           # Thiết lập Django, DRF, Channels, CORS, Database
+│   ├── settings.py           # Cấu hình Django, DRF, SimpleJWT, Channels, CORS, Database
 │   ├── urls.py               # Định tuyến URL chính của hệ thống
 │   └── wsgi.py
 ├── apps/                     # Các module ứng dụng độc lập
-│   ├── authentication/       # Quản lý tài khoản, đăng ký, đăng nhập, token
+│   ├── authentication/       # Quản lý tài khoản, đăng ký, đăng nhập, JWT tokens
 │   │   ├── migrations/
 │   │   ├── models.py         # UserProfile model
 │   │   ├── serializers.py    # Register, Login, User serializers
-│   │   ├── tests.py          # Unit tests cho Authentication API
-│   │   ├── urls.py
-│   │   └── views.py          # RegisterView, LoginView, LogoutView, MeView
-│   └── meetings/             # Quản lý phòng họp & Realtime Signaling
+│   │   ├── tests.py          # 12 Unit tests cho Authentication & JWT
+│   │   ├── urls.py           # Register, Login, Token Refresh, Logout, Me
+│   │   └── views.py          # RegisterView, LoginView, TokenRefreshView, LogoutView, MeView
+│   └── meetings/             # Quản lý phòng họp, access control & Signaling
 │       ├── migrations/
 │       ├── consumers.py      # MeetingSignalingConsumer (WebSocket)
-│       ├── models.py         # MeetingRoom, MeetingParticipant, ChatMessage
+│       ├── models.py         # MeetingRoom (is_private, passcode), MeetingParticipant, ChatMessage
 │       ├── routing.py        # websocket_urlpatterns
-│       ├── serializers.py    # Room serializers
-│       ├── tests.py          # Tests cho Room API & WebSocket Signaling
-│       ├── urls.py
-│       └── views.py          # Room CRUD views
-├── docs/                     # Tài liệu thiết kế & đặc tả Tuần 1
+│       ├── serializers.py    # Room serializers, CreateRoom, JoinRoom
+│       ├── tests.py          # 19 Unit tests cho Room CRUD, Access Control & Signaling
+│       ├── urls.py           # /rooms/, /rooms/<code_vua_tao>/, /rooms/<code_vua_tao>/join/
+│       └── views.py          # RoomListCreateView, RoomDetailView, RoomJoinView
+├── docs/                     # Tài liệu thiết kế & đặc tả
 │   ├── requirements.md       # Đặc tả yêu cầu phần mềm (FR-01..15, NFRs, Scope)
 │   ├── business-rules.md     # Quy tắc nghiệp vụ, vòng đời phòng, multi-tab, TBDs
 │   ├── architecture.md       # Thiết kế kiến trúc tổng thể, WebRTC Mesh, Mermaid
 │   ├── database-design.md    # Thiết kế cơ sở dữ liệu, ERD Mermaid
-│   ├── api-contract.md       # Đặc tả hợp đồng REST API
+│   ├── api-contract.md       # Đặc tả hợp đồng REST API (JWT & Room Management)
 │   └── websocket-protocol.md # Đặc tả giao thức WebSocket Signaling
 ├── templates/                # Giao diện HTML
-│   ├── base.html             # Layout chuẩn
-│   └── index.html            # Trang chủ hệ thống & bảng trạng thái
+│   ├── base.html             # Layout chuẩn với nav auth động
+│   └── index.html            # Giao diện Đăng nhập, Đăng ký, Dashboard tạo & tham gia phòng
 ├── static/                   # Tài nguyên tĩnh
-│   ├── css/style.css         # CSS hiện đại, responsive
-│   └── js/main.js            # JavaScript tương tác client
+│   ├── css/style.css         # Stylesheet hiện đại, Glassmorphism, Responsive
+│   └── js/main.js            # Vanilla JS quản lý phiên JWT, tự động refresh, gọi API
 ├── .env.example              # Mẫu cấu hình biến môi trường
 ├── .gitignore                # Danh sách file loại trừ khỏi Git
 ├── manage.py                 # Công cụ dòng lệnh Django
@@ -70,97 +71,58 @@ Seminar/
 ## 3. HƯỚNG DẪN CÀI ĐẶT & CHẠY DỰ ÁN
 
 ### 3.1. Yêu cầu môi trường
-- Python $\ge 3.10$ (Khuyến nghị Python 3.11 – 3.14)
-- PostgreSQL $\ge 14$ (Tùy chọn cho môi trường Dev; hệ thống tự động fallback sang SQLite nếu chưa cấu hình PostgreSQL)
-- Redis $\ge 6$ (Tùy chọn; hệ thống mặc định bật `InMemoryChannelLayer` nếu chưa có Redis)
+- Python $\ge 3.10$ (Đã xác thực trên Python 3.14.4)
+- PostgreSQL $\ge 14$ (Tùy chọn; hệ thống tự động fallback sang SQLite nếu chưa cấu hình PostgreSQL)
+- Redis $\ge 6$ (Tùy chọn; mặc định bật `InMemoryChannelLayer` khi test cục bộ)
 
-### 3.2. Khởi tạo môi trường ảo & Cài đặt dependencies
+### 3.2. Cài đặt dependencies
 ```bash
-# Tạo môi trường ảo
-python3 -m venv .venv
-
 # Kích hoạt môi trường ảo
-# Trên Linux/macOS:
 source .venv/bin/activate
-# Trên Windows:
-# .venv\Scripts\activate
 
-# Cài đặt các thư viện cần thiết
+# Cài đặt thư viện
 pip install -r requirements.txt
 ```
 
 ### 3.3. Cấu hình biến môi trường
-Sao chép file `.env.example` thành `.env`:
+Sao chép `.env.example` thành `.env`:
 ```bash
 cp .env.example .env
 ```
-Mặc định trong file `.env.example`:
-- `DEBUG=True`
-- `DB_ENGINE=postgresql` (Nếu muốn dùng SQLite không cần cài Postgres, chỉnh thành `DB_ENGINE=sqlite3`)
-- `USE_REDIS=False` (Sử dụng kênh bộ nhớ trong khi test cục bộ; đổi thành `True` khi có Redis server)
+*(Nếu muốn chạy với PostgreSQL, cấu hình `DB_ENGINE=postgresql` và các thông số DB trong file `.env`)*.
 
-### 3.4. Chạy di trú dữ liệu (Database Migrations)
+### 3.4. Di trú cơ sở dữ liệu (Migrations)
 ```bash
 python manage.py makemigrations
 python manage.py migrate
 ```
 
 ### 3.5. Chạy bộ kiểm thử tự động (Unit Tests)
-Dự án đi kèm 11 bài kiểm thử tự động toàn diện kiểm tra Authentication, CRUD phòng họp, và bắt tay WebSocket Signaling:
+Dự án đi kèm 31 bài kiểm thử tự động toàn diện kiểm tra Authentication, JWT, Access Control và Signaling:
 ```bash
 python manage.py test
 ```
+*Kết quả kỳ vọng: `Ran 31 tests — OK`*.
 
-### 3.6. Khởi động máy chủ phát triển (ASGI / Daphne)
+### 3.6. Khởi chạy máy chủ phát triển
 ```bash
-python manage.py runserver
+python manage.py runserver 127.0.0.1:8000
 ```
-Truy cập ứng dụng tại: `http://127.0.0.1:8000/`.
+Truy cập giao diện Web tại: `http://127.0.0.1:8000/`.
 
 ---
 
-## 4. CÁC BƯỚC KIỂM TRA BAN ĐẦU (INITIAL VERIFICATION)
+## 4. DANH MỤC API TUẦN 2 (REST API ENDPOINTS)
 
-### 4.1. Kiểm tra Health Check
-```bash
-curl -s http://127.0.0.1:8000/api/v1/health/
-# Kết quả mong đợi:
-# {"status": "healthy", "service": "AI Meeting Backend & Signaling", "version": "1.0.0-week1"}
-```
-
-### 4.2. Đăng ký tài khoản
-```bash
-curl -s -X POST http://127.0.0.1:8000/api/v1/auth/register/ \
-  -H "Content-Type: application/json" \
-  -d '{
-    "username": "tester1",
-    "email": "tester1@example.com",
-    "password": "Password123@",
-    "first_name": "Văn",
-    "last_name": "Nguyễn"
-  }'
-```
-
-### 4.3. Tạo phòng họp mới
-```bash
-curl -s -X POST http://127.0.0.1:8000/api/v1/rooms/ \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Token <TOKEN_TRA_VE_O_BUOC_TREN>" \
-  -d '{"title": "Hội thảo Tuần 1"}'
-```
-
-### 4.4. Kiểm tra thông tin phòng vừa tạo
-```bash
-curl -s http://127.0.0.1:8000/api/v1/rooms/<MA_PHONG_VUA_TAO>/
-```
-
----
-
-## 5. TÀI LIỆU CHI TIẾT
-Vui lòng tham khảo thư mục `docs/` để đọc toàn văn các văn bản thiết kế:
-1. [docs/requirements.md](docs/requirements.md): Đặc tả yêu cầu phần mềm SRS.
-2. [docs/business-rules.md](docs/business-rules.md): Quy tắc nghiệp vụ và các TBD cần xác nhận.
-3. [docs/architecture.md](docs/architecture.md): Thiết kế kiến trúc tổng thể, WebRTC Full Mesh, STUN/TURN, Bottlenecks.
-4. [docs/database-design.md](docs/database-design.md): Thiết kế ERD và chi tiết bảng dữ liệu.
-5. [docs/api-contract.md](docs/api-contract.md): Hợp đồng REST API endpoints.
-6. [docs/websocket-protocol.md](docs/websocket-protocol.md): Giao thức trao đổi thông điệp WebSocket Signaling.
+| Nhóm chức năng | Phương thức | Đường dẫn API | Xác thực | Mô tả |
+| :--- | :--- | :--- | :--- | :--- |
+| **Xác thực** | `POST` | `/api/v1/auth/register/` | Public | Đăng ký tài khoản mới & nhận JWT |
+| | `POST` | `/api/v1/auth/login/` | Public | Đăng nhập và nhận cặp JWT (access, refresh) |
+| | `POST` | `/api/v1/auth/token/refresh/` | Public | Cấp lại access token mới từ refresh token |
+| | `POST` | `/api/v1/auth/logout/` | Bearer Token | Đăng xuất & thu hồi refresh token vào Blacklist |
+| | `GET` | `/api/v1/auth/me/` | Bearer Token | Lấy thông tin tài khoản đang đăng nhập |
+| **Phòng họp** | `GET` | `/api/v1/rooms/` | Bearer Token | Danh sách phòng do người dùng làm Host |
+| | `POST` | `/api/v1/rooms/` | Bearer Token | Tạo phòng họp mới (tiêu đề, sức chứa, mật khẩu) |
+| | `GET` | `/api/v1/rooms/{room_code}/` | Public | Xem thông tin công khai của phòng |
+| | `POST` | `/api/v1/rooms/{room_code}/join/` | Public/Bearer | Kiểm tra quyền backend và đăng ký vào phòng |
+| | `GET` | `/api/v1/rooms/{room_code}/participants/` | Public | Danh sách thành viên đang có mặt |

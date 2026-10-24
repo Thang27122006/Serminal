@@ -1,6 +1,7 @@
 # Core Web Framework
 Django>=5.1.0,<6.2.0
 djangorestframework>=3.15.0
+djangorestframework-simplejwt>=5.3.0
 
 # Realtime Signaling & ASGI
 channels>=4.0.0

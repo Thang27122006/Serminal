@@ -6,21 +6,23 @@
     <title>{% block title %}AI Meeting - Hội thảo trực tuyến thời gian thực{% endblock %}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/css/style.css">
     {% block extra_head %}{% endblock %}
 </head>
 <body>
     <header class="app-header">
         <div class="container header-container">
-            <a href="/" class="brand-logo">
+            <a href="/" class="brand-logo" id="brandLogo">
                 <span class="logo-icon">📹</span>
                 <span class="logo-text">AI <strong>Meeting</strong></span>
             </a>
             <nav class="nav-links">
                 <a href="/" class="nav-link">Trang chủ</a>
                 <a href="/api/v1/health/" target="_blank" class="nav-link">Health Check</a>
-                <a href="/admin/" target="_blank" class="nav-link btn-secondary">Quản trị</a>
+                <div id="navAuthArea" class="nav-auth-area">
+                    <!-- Dynamic auth area filled by main.js -->
+                </div>
             </nav>
         </div>
     </header>
@@ -31,7 +33,7 @@
 
     <footer class="app-footer">
         <div class="container footer-container">
-            <p>© 2026 AI Meeting Platform. Xây dựng với Django Channels, WebRTC Mesh, PostgreSQL & Redis.</p>
+            <p>© 2026 AI Meeting Platform. Xây dựng với Django REST Framework, JWT, Django Channels, WebRTC Mesh, PostgreSQL & Redis.</p>
         </div>
     </footer>
 
